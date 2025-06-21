@@ -68,71 +68,59 @@ runs:
         mongodb-version: ${{ inputs.mongodb-version }}
         mongodb-port: 27017
 
-    - name: 'Install system dependencies'
-      shell: bash
-      run: |
-        echo "📦 Installing system dependencies..."
-        sudo apt-get update -qq
-        sudo apt-get install -y netcat-openbsd
-        echo "✅ System dependencies installed"
-
     - name: 'Start Redis service'
       uses: supercharge/redis-github-action@1.7.0
       with:
         redis-version: ${{ inputs.redis-version }}
         redis-port: 6379
 
-    - name: 'Verify MongoDB connection'
+    - name: 'Wait for MongoDB to be ready'
       shell: bash
       run: |
-        echo "🍃 Verifying MongoDB connection..."
-        timeout=60  # MongoDB should start much faster now
+        echo "🍃 Waiting for MongoDB to be ready..."
+        
+        # Simple approach: wait for port to be available
+        timeout=60
         elapsed=0
         
         while [ $elapsed -lt $timeout ]; do
-          # Use netcat to check if port is open (faster than mongosh)
-          if nc -z localhost 27017 2>/dev/null; then
-            echo "✅ MongoDB port is open"
-            # Now test actual MongoDB connection
-            if mongosh --eval "db.runCommand({ping: 1})" --quiet >/dev/null 2>&1; then
-              echo "✅ MongoDB is ready and accepting connections"
-              echo "📋 MongoDB version:"
-              mongosh --eval "print('MongoDB ' + db.version())" --quiet
-              break
-            fi
+          if python3 -c "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 27017)); s.close()" 2>/dev/null; then
+            echo "✅ MongoDB port 27017 is responding"
+            break
           fi
-          echo "⏳ Waiting for MongoDB to start... (${elapsed}s/${timeout}s)"
+          echo "⏳ Waiting for MongoDB... (${elapsed}s/${timeout}s)"
           sleep 2
           elapsed=$((elapsed + 2))
         done
         
         if [ $elapsed -ge $timeout ]; then
           echo "❌ MongoDB failed to start within ${timeout} seconds"
-          echo "🔍 Checking MongoDB service status..."
-          sudo systemctl status mongodb || sudo service mongodb status || echo "Could not check MongoDB status"
+          echo "🔍 Checking what's listening on port 27017..."
+          sudo netstat -tlnp | grep 27017 || echo "Port 27017 not found"
+          echo "🔍 Checking Docker containers..."
+          docker ps | grep mongo || echo "No mongo containers found"
           exit 1
         fi
+        
+        # Give it a moment to fully initialize
+        echo "⏳ Giving MongoDB extra time to initialize..."
+        sleep 5
+        echo "✅ MongoDB should be ready!"
 
-    - name: 'Verify Redis connection'
+    - name: 'Wait for Redis to be ready'
       shell: bash
       run: |
-        echo "🔴 Verifying Redis connection..."
-        timeout=30  # Redis starts very quickly
+        echo "🔴 Waiting for Redis to be ready..."
+        
+        timeout=30
         elapsed=0
         
         while [ $elapsed -lt $timeout ]; do
-          # Check if port is open first
-          if nc -z localhost 6379 2>/dev/null; then
-            echo "✅ Redis port is open"
-            # Test actual Redis connection
-            if redis-cli ping >/dev/null 2>&1; then
-              echo "✅ Redis is ready and accepting connections"
-              echo "📋 Redis version:"
-              redis-cli info server | grep redis_version
-              break
-            fi
+          if python3 -c "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 6379)); s.close()" 2>/dev/null; then
+            echo "✅ Redis port 6379 is responding"
+            break
           fi
-          echo "⏳ Waiting for Redis to start... (${elapsed}s/${timeout}s)"
+          echo "⏳ Waiting for Redis... (${elapsed}s/${timeout}s)"
           sleep 1
           elapsed=$((elapsed + 1))
         done
@@ -141,6 +129,8 @@ runs:
           echo "❌ Redis failed to start within ${timeout} seconds"
           exit 1
         fi
+        
+        echo "✅ Redis is ready!"
 
     - name: 'Clone Spoo.me repository'
       shell: bash
