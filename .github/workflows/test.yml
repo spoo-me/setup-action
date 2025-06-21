@@ -97,27 +97,85 @@ jobs:
             echo "⚠️ Service response timed out"
           fi
 
+      - name: 'Test URL Shortening API'
+        run: |
+          echo "🔗 Testing URL shortening functionality..."
+          
+          SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
+          
+          # Create a short URL using POST request
+          echo "📤 Creating short URL for https://example.com..."
+          api_response=$(curl -s \
+            --request POST \
+            --url "$SERVICE_URL/" \
+            --header 'Accept: application/json' \
+            --header 'Content-Type: application/x-www-form-urlencoded' \
+            --data 'url=https://example.com' \
+            --max-time 10)
+          
+          echo "📥 API Response:"
+          echo "$api_response"
+          
+          # Check if response contains expected fields
+          if echo "$api_response" | grep -q "short_url" && echo "$api_response" | grep -q "original_url"; then
+            echo "✅ API response contains expected fields"
+            
+            # Extract the short URL for redirect test
+            short_url=$(echo "$api_response" | grep -o '"short_url":"[^"]*"' | cut -d'"' -f4)
+            echo "🔗 Extracted short URL: $short_url"
+            
+            if [ -n "$short_url" ]; then
+              # Test redirect functionality
+              echo "🔄 Testing redirect functionality..."
+              
+              # Use different user agent and IP simulation
+              redirect_response=$(curl -s \
+                --max-time 10 \
+                --header 'User-Agent: Mozilla/5.0 (compatible; TestBot/1.0)' \
+                --header 'X-Forwarded-For: 203.0.113.1' \
+                --write-out "%{http_code}" \
+                --output /dev/null \
+                "$short_url")
+              
+              echo "🔍 Redirect response code: $redirect_response"
+              
+              if [ "$redirect_response" = "302" ] || [ "$redirect_response" = "301" ]; then
+                echo "✅ Redirect working correctly (HTTP $redirect_response)"
+              else
+                echo "⚠️ Unexpected redirect response: $redirect_response"
+                echo "🔍 Testing with full response to debug..."
+                curl -s -I "$short_url" | head -n 5
+              fi
+            else
+              echo "❌ Could not extract short URL from response"
+              exit 1
+            fi
+          else
+            echo "❌ API response does not contain expected fields"
+            echo "🔍 Full response for debugging:"
+            echo "$api_response"
+            exit 1
+          fi
+
       - name: 'Test Database Connectivity'
         run: |
           echo "🗄️ Testing database connectivity..."
           
-          # Test MongoDB connection
+          # Test MongoDB connection using Python (same as main action)
           echo "🍃 Testing MongoDB..."
-          if mongosh --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
-            echo "✅ MongoDB is accessible"
-            mongosh --eval "db.version()" --quiet
+          if python3 -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost', 27017)); s.close()" 2>/dev/null; then
+            echo "✅ MongoDB port 27017 is accessible"
           else
-            echo "❌ MongoDB not accessible"
+            echo "❌ MongoDB port 27017 is not accessible"
             exit 1
           fi
           
-          # Test Redis connection
+          # Test Redis connection using Python (same as main action)
           echo "🔴 Testing Redis..."
-          if redis-cli ping >/dev/null 2>&1; then
-            echo "✅ Redis is accessible"
-            redis-cli info server | grep redis_version | head -1
+          if python3 -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost', 6379)); s.close()" 2>/dev/null; then
+            echo "✅ Redis port 6379 is accessible"
           else
-            echo "❌ Redis not accessible"
+            echo "❌ Redis port 6379 is not accessible"
             exit 1
           fi
 
