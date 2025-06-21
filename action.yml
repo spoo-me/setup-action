@@ -219,28 +219,33 @@ runs:
         echo "📋 Installed packages:"
         uv pip list
 
-    - name: 'Initialize database collections'
+    - name: 'Verify database services'
       shell: bash
       run: |
-        echo "🗄️ Initializing database collections..."
+        echo "🔍 Verifying database services are ready..."
         
-        # Create database and collections if needed (optimized for single instance)
-        mongosh url-shortener --eval "
-          // Create collections if they don't exist
-          if (!db.getCollectionNames().includes('urls')) {
-            db.createCollection('urls');
-            print('✅ Created urls collection');
-          } else {
-            print('ℹ️ urls collection already exists');
-          }
-                    
-          // Show database status
-          print('📊 Database status:');
-          print('Collections: ' + db.getCollectionNames().length);
-          print('Database size: ' + db.stats().dataSize + ' bytes');
-        "
+        # Test MongoDB port accessibility
+        if python3 -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost', 27017)); s.close()" 2>/dev/null; then
+          echo "✅ MongoDB port 27017 is accessible"
+        else
+          echo "❌ MongoDB port 27017 is not accessible"
+          echo "🔍 Checking MongoDB container status..."
+          docker ps | grep mongo || echo "No MongoDB container found"
+          exit 1
+        fi
         
-        echo "✅ Database initialization complete"
+        # Test Redis port accessibility  
+        if python3 -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost', 6379)); s.close()" 2>/dev/null; then
+          echo "✅ Redis port 6379 is accessible"
+        else
+          echo "❌ Redis port 6379 is not accessible"
+          echo "🔍 Checking Redis container status..."
+          docker ps | grep redis || echo "No Redis container found"
+          exit 1
+        fi
+        
+        echo "✅ Both database services are ready"
+        echo "ℹ️  Database collections will be created automatically by the spoo.me application"
 
     - name: 'Start Spoo.me service'
       shell: bash
