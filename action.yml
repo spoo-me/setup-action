@@ -30,7 +30,7 @@ outputs:
     value: 'http://127.0.0.1:8000'
   mongodb-uri:
     description: 'MongoDB connection URI'
-    value: 'mongodb://localhost:27017/'
+    value: 'mongodb://localhost:27017/url-shortener'
   redis-uri:
     description: 'Redis connection URI'
     value: 'redis://localhost:6379'
@@ -66,8 +66,15 @@ runs:
       uses: supercharge/mongodb-github-action@1.10.0
       with:
         mongodb-version: ${{ inputs.mongodb-version }}
-        mongodb-replica-set: test-rs
         mongodb-port: 27017
+
+    - name: 'Install system dependencies'
+      shell: bash
+      run: |
+        echo "📦 Installing system dependencies..."
+        sudo apt-get update -qq
+        sudo apt-get install -y netcat-openbsd
+        echo "✅ System dependencies installed"
 
     - name: 'Start Redis service'
       uses: supercharge/redis-github-action@1.7.0
@@ -79,14 +86,20 @@ runs:
       shell: bash
       run: |
         echo "🍃 Verifying MongoDB connection..."
-        timeout=${{ inputs.wait-timeout }}
+        timeout=60  # MongoDB should start much faster now
         elapsed=0
         
         while [ $elapsed -lt $timeout ]; do
-          if mongosh --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
-            echo "✅ MongoDB is ready and accepting connections"
-            mongosh --eval "db.version()" --quiet
-            break
+          # Use netcat to check if port is open (faster than mongosh)
+          if nc -z localhost 27017 2>/dev/null; then
+            echo "✅ MongoDB port is open"
+            # Now test actual MongoDB connection
+            if mongosh --eval "db.runCommand({ping: 1})" --quiet >/dev/null 2>&1; then
+              echo "✅ MongoDB is ready and accepting connections"
+              echo "📋 MongoDB version:"
+              mongosh --eval "print('MongoDB ' + db.version())" --quiet
+              break
+            fi
           fi
           echo "⏳ Waiting for MongoDB to start... (${elapsed}s/${timeout}s)"
           sleep 2
@@ -95,6 +108,8 @@ runs:
         
         if [ $elapsed -ge $timeout ]; then
           echo "❌ MongoDB failed to start within ${timeout} seconds"
+          echo "🔍 Checking MongoDB service status..."
+          sudo systemctl status mongodb || sudo service mongodb status || echo "Could not check MongoDB status"
           exit 1
         fi
 
@@ -102,18 +117,24 @@ runs:
       shell: bash
       run: |
         echo "🔴 Verifying Redis connection..."
-        timeout=${{ inputs.wait-timeout }}
+        timeout=30  # Redis starts very quickly
         elapsed=0
         
         while [ $elapsed -lt $timeout ]; do
-          if redis-cli ping >/dev/null 2>&1; then
-            echo "✅ Redis is ready and accepting connections"
-            redis-cli info server | grep redis_version
-            break
+          # Check if port is open first
+          if nc -z localhost 6379 2>/dev/null; then
+            echo "✅ Redis port is open"
+            # Test actual Redis connection
+            if redis-cli ping >/dev/null 2>&1; then
+              echo "✅ Redis is ready and accepting connections"
+              echo "📋 Redis version:"
+              redis-cli info server | grep redis_version
+              break
+            fi
           fi
           echo "⏳ Waiting for Redis to start... (${elapsed}s/${timeout}s)"
-          sleep 2
-          elapsed=$((elapsed + 2))
+          sleep 1
+          elapsed=$((elapsed + 1))
         done
         
         if [ $elapsed -ge $timeout ]; then
@@ -164,9 +185,9 @@ runs:
         
         # Create .env file with required configurations
         cat > .env << 'EOF'
-        # MongoDB connection details
-        MONGODB_URI=mongodb://localhost:27017/
-        MONGODB_URI_DEV=mongodb://localhost:27017/
+        # MongoDB connection details (optimized for single instance)
+        MONGODB_URI=mongodb://localhost:27017/url-shortener
+        MONGODB_URI_DEV=mongodb://localhost:27017/url-shortener
         MONGO_DB_NAME=url-shortener
         
         # Redis connection details
@@ -213,10 +234,8 @@ runs:
       run: |
         echo "🗄️ Initializing database collections..."
         
-        # Create database and collections if needed
-        mongosh --eval "
-          use url-shortener;
-          
+        # Create database and collections if needed (optimized for single instance)
+        mongosh url-shortener --eval "
           // Create collections if they don't exist
           if (!db.getCollectionNames().includes('urls')) {
             db.createCollection('urls');
@@ -224,10 +243,11 @@ runs:
           } else {
             print('ℹ️ urls collection already exists');
           }
-          
+                    
           // Show database status
           print('📊 Database status:');
-          printjson(db.stats());
+          print('Collections: ' + db.getCollectionNames().length);
+          print('Database size: ' + db.stats().dataSize + ' bytes');
         "
         
         echo "✅ Database initialization complete"
@@ -309,9 +329,10 @@ runs:
         echo "🎉 Spoo.me service setup complete!"
         echo "📊 Service Status:"
         echo "  - Service URL: http://127.0.0.1:8000"
-        echo "  - MongoDB: mongodb://localhost:27017/"
+        echo "  - MongoDB: mongodb://localhost:27017/url-shortener (single instance)"
         echo "  - Redis: redis://localhost:6379"
         echo "  - PID: $(cat spoo-service.pid 2>/dev/null || echo 'N/A')"
+        echo "  - Total setup time: Fast optimized setup! 🚀"
         echo ""
         echo "📄 Recent service logs:"
         tail -n 10 spoo-service.log 2>/dev/null || echo "No logs available"
