@@ -327,3 +327,17 @@ This project is open source and available under the [MIT License](LICENSE).
 - [Supercharge MongoDB Action](https://github.com/supercharge/mongodb-github-action) - MongoDB setup
 - [Supercharge Redis Action](https://github.com/supercharge/redis-github-action) - Redis setup
 - [UV](https://github.com/astral-sh/uv) - Fast Python package management
+
+
+---
+
+<h6 align="center">
+<img src="https://spoo.me/static/images/favicon.png" height=30 title="Spoo.me Copyright">
+<br>
+© spoo.me . 2025
+
+All Rights Reserved</h6>
+
+<p align="center">
+	<a href="https://github.com/spoo-me/setup-action/blob/master/LICENSE.txt"><img src="https://img.shields.io/static/v1.svg?style=for-the-badge&label=License&message=APACHE-2.0&logoColor=d9e0ee&colorA=363a4f&colorB=b7bdf8"/></a>
+</p>
