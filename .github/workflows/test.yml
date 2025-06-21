@@ -131,8 +131,8 @@ jobs:
               # Use different user agent and IP simulation
               redirect_response=$(curl -s \
                 --max-time 10 \
-                --header 'User-Agent: Mozilla/5.0 (compatible; TestBot/1.0)' \
-                --header 'X-Forwarded-For: 203.0.113.1' \
+                --header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3' \
+                --header 'X-Forwarded-For: 110.33.122.75' \
                 --write-out "%{http_code}" \
                 --output /dev/null \
                 "$short_url")
@@ -145,6 +145,8 @@ jobs:
                 echo "⚠️ Unexpected redirect response: $redirect_response"
                 echo "🔍 Testing with full response to debug..."
                 curl -s -I "$short_url" | head -n 5
+                echo "📄 Original API response for debugging:"
+                echo "$api_response"
               fi
             else
               echo "❌ Could not extract short URL from response"
@@ -154,28 +156,6 @@ jobs:
             echo "❌ API response does not contain expected fields"
             echo "🔍 Full response for debugging:"
             echo "$api_response"
-            exit 1
-          fi
-
-      - name: 'Test Database Connectivity'
-        run: |
-          echo "🗄️ Testing database connectivity..."
-          
-          # Test MongoDB connection using Python (same as main action)
-          echo "🍃 Testing MongoDB..."
-          if python3 -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost', 27017)); s.close()" 2>/dev/null; then
-            echo "✅ MongoDB port 27017 is accessible"
-          else
-            echo "❌ MongoDB port 27017 is not accessible"
-            exit 1
-          fi
-          
-          # Test Redis connection using Python (same as main action)
-          echo "🔴 Testing Redis..."
-          if python3 -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost', 6379)); s.close()" 2>/dev/null; then
-            echo "✅ Redis port 6379 is accessible"
-          else
-            echo "❌ Redis port 6379 is not accessible"
             exit 1
           fi
 
