@@ -1,0 +1,147 @@
+name: 'Release'
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release'
+        required: true
+        type: string
+
+jobs:
+  test-before-release:
+    name: 'Test Before Release'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: 'Test action before release'
+        uses: ./
+        id: test-action
+        with:
+          wait-timeout: '180'
+
+      - name: 'Verify action works'
+        run: |
+          echo "✅ Pre-release test passed"
+          echo "Service URL: ${{ steps.test-action.outputs.service-url }}"
+          curl -s ${{ steps.test-action.outputs.service-url }} | head -n 3
+
+  create-release:
+    name: 'Create Release'
+    needs: test-before-release
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 'Get tag name'
+        id: get-tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 'Generate changelog'
+        id: changelog
+        run: |
+          TAG="${{ steps.get-tag.outputs.tag }}"
+          echo "Generating changelog for $TAG"
+          
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 "$TAG"^ 2>/dev/null || echo "")
+          
+          if [ -n "$PREV_TAG" ]; then
+            echo "## Changes since $PREV_TAG" > changelog.md
+            git log --pretty=format:"- %s (%an)" "$PREV_TAG".."$TAG" >> changelog.md
+          else
+            echo "## Initial Release" > changelog.md
+            echo "- First release of Setup Spoo.me Action" >> changelog.md
+          fi
+          
+          echo "## Features" >> changelog.md
+          echo "- 🚀 Complete Spoo.me service setup" >> changelog.md
+          echo "- 🔧 MongoDB and Redis configuration" >> changelog.md
+          echo "- 🐍 Python environment setup" >> changelog.md
+          echo "- ⚙️ Configurable versions and timeouts" >> changelog.md
+          echo "- 📊 Comprehensive health checks" >> changelog.md
+          echo "- 🔍 Detailed logging and monitoring" >> changelog.md
+          
+          echo "## Usage" >> changelog.md
+          echo '```yaml' >> changelog.md
+          echo "- name: Setup Spoo.me Service" >> changelog.md
+          echo "  uses: spoo-me/setup-action@$TAG" >> changelog.md
+          echo "  with:" >> changelog.md
+          echo "    python-version: '3.11'" >> changelog.md
+          echo "    wait-timeout: '120'" >> changelog.md
+          echo '```' >> changelog.md
+
+      - name: 'Create GitHub Release'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get-tag.outputs.tag }}
+          release_name: 'Setup Spoo.me Action ${{ steps.get-tag.outputs.tag }}'
+          body_path: changelog.md
+          draft: false
+          prerelease: ${{ contains(steps.get-tag.outputs.tag, '-') }}
+
+      - name: 'Update major version tag'
+        if: ${{ !contains(steps.get-tag.outputs.tag, '-') }}
+        run: |
+          TAG="${{ steps.get-tag.outputs.tag }}"
+          MAJOR_VERSION=$(echo $TAG | cut -d. -f1)
+          
+          echo "Updating $MAJOR_VERSION to point to $TAG"
+          
+          # Delete existing major version tag if it exists
+          git tag -d $MAJOR_VERSION 2>/dev/null || true
+          git push origin :refs/tags/$MAJOR_VERSION 2>/dev/null || true
+          
+          # Create new major version tag
+          git tag $MAJOR_VERSION $TAG
+          git push origin $MAJOR_VERSION
+
+  update-marketplace:
+    name: 'Update Marketplace'
+    needs: create-release
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref_name, '-') }}
+    
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: 'Marketplace update notice'
+        run: |
+          echo "🎉 Release created successfully!"
+          echo "📦 To publish to GitHub Marketplace:"
+          echo "1. Go to https://github.com/${{ github.repository }}/releases"
+          echo "2. Edit the latest release"
+          echo "3. Check 'Publish this Action to the GitHub Marketplace'"
+          echo "4. Add marketplace categories and keywords"
+          echo "5. Save the release"
+          echo ""
+          echo "🏷️ Recommended marketplace categories:"
+          echo "- Deployment"
+          echo "- Testing"
+          echo "- Utilities"
+          echo ""
+          echo "🔖 Recommended keywords:"
+          echo "- spoo-me"
+          echo "- url-shortener"
+          echo "- mongodb"
+          echo "- redis"
+          echo "- python"
+          echo "- testing" 

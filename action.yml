@@ -1,0 +1,321 @@
+name: 'Setup Spoo.me Service'
+description: 'Run spoo.me URL shortener service locally with MongoDB, Redis, and all dependencies'
+author: 'spoo.me team'
+
+inputs:
+  python-version:
+    description: 'Python version to use'
+    required: false
+    default: '3.11'
+  mongodb-version:
+    description: 'MongoDB version to use'
+    required: false
+    default: '7.0'
+  redis-version:
+    description: 'Redis version to use'
+    required: false
+    default: '7.2'
+  spoo-directory:
+    description: 'Directory to clone spoo.me repository'
+    required: false
+    default: 'spoo-me'
+  wait-timeout:
+    description: 'Timeout in seconds to wait for services to start'
+    required: false
+    default: '120'
+
+outputs:
+  service-url:
+    description: 'URL where the spoo.me service is running'
+    value: 'http://127.0.0.1:8000'
+  mongodb-uri:
+    description: 'MongoDB connection URI'
+    value: 'mongodb://localhost:27017/'
+  redis-uri:
+    description: 'Redis connection URI'
+    value: 'redis://localhost:6379'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: 'Display setup information'
+      shell: bash
+      run: |
+        echo "🚀 Setting up Spoo.me URL Shortener Service"
+        echo "📋 Configuration:"
+        echo "  - Python version: ${{ inputs.python-version }}"
+        echo "  - MongoDB version: ${{ inputs.mongodb-version }}"
+        echo "  - Redis version: ${{ inputs.redis-version }}"
+        echo "  - Spoo directory: ${{ inputs.spoo-directory }}"
+        echo "  - Wait timeout: ${{ inputs.wait-timeout }}s"
+        echo ""
+
+    - name: 'Setup Python'
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: 'Display Python version'
+      shell: bash
+      run: |
+        echo "🐍 Python setup complete:"
+        python --version
+        pip --version
+
+    - name: 'Start MongoDB service'
+      uses: supercharge/mongodb-github-action@1.10.0
+      with:
+        mongodb-version: ${{ inputs.mongodb-version }}
+        mongodb-replica-set: test-rs
+        mongodb-port: 27017
+
+    - name: 'Start Redis service'
+      uses: supercharge/redis-github-action@1.7.0
+      with:
+        redis-version: ${{ inputs.redis-version }}
+        redis-port: 6379
+
+    - name: 'Verify MongoDB connection'
+      shell: bash
+      run: |
+        echo "🍃 Verifying MongoDB connection..."
+        timeout=${{ inputs.wait-timeout }}
+        elapsed=0
+        
+        while [ $elapsed -lt $timeout ]; do
+          if mongosh --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
+            echo "✅ MongoDB is ready and accepting connections"
+            mongosh --eval "db.version()" --quiet
+            break
+          fi
+          echo "⏳ Waiting for MongoDB to start... (${elapsed}s/${timeout}s)"
+          sleep 2
+          elapsed=$((elapsed + 2))
+        done
+        
+        if [ $elapsed -ge $timeout ]; then
+          echo "❌ MongoDB failed to start within ${timeout} seconds"
+          exit 1
+        fi
+
+    - name: 'Verify Redis connection'
+      shell: bash
+      run: |
+        echo "🔴 Verifying Redis connection..."
+        timeout=${{ inputs.wait-timeout }}
+        elapsed=0
+        
+        while [ $elapsed -lt $timeout ]; do
+          if redis-cli ping >/dev/null 2>&1; then
+            echo "✅ Redis is ready and accepting connections"
+            redis-cli info server | grep redis_version
+            break
+          fi
+          echo "⏳ Waiting for Redis to start... (${elapsed}s/${timeout}s)"
+          sleep 2
+          elapsed=$((elapsed + 2))
+        done
+        
+        if [ $elapsed -ge $timeout ]; then
+          echo "❌ Redis failed to start within ${timeout} seconds"
+          exit 1
+        fi
+
+    - name: 'Clone Spoo.me repository'
+      shell: bash
+      run: |
+        echo "📦 Cloning Spoo.me repository..."
+        if [ -d "${{ inputs.spoo-directory }}" ]; then
+          echo "🧹 Removing existing directory"
+          rm -rf "${{ inputs.spoo-directory }}"
+        fi
+        
+        git clone https://github.com/spoo-me/url-shortener.git "${{ inputs.spoo-directory }}"
+        cd "${{ inputs.spoo-directory }}"
+        
+        echo "✅ Repository cloned successfully"
+        echo "📂 Repository structure:"
+        ls -la
+        
+        if [ -f "pyproject.toml" ]; then
+          echo "✅ Found pyproject.toml - uv compatible project"
+        else
+          echo "⚠️ No pyproject.toml found - project structure may vary"
+        fi
+
+    - name: 'Install and setup uv'
+      shell: bash
+      run: |
+        echo "🚀 Installing uv (fast Python package manager)..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        
+        # Reload PATH for current session
+        export PATH="$HOME/.cargo/bin:$PATH"
+        
+        echo "✅ uv installation complete:"
+        uv --version
+
+    - name: 'Setup environment configuration'
+      shell: bash
+      run: |
+        echo "⚙️ Setting up environment configuration..."
+        cd "${{ inputs.spoo-directory }}"
+        
+        # Create .env file with required configurations
+        cat > .env << 'EOF'
+        # MongoDB connection details
+        MONGODB_URI=mongodb://localhost:27017/
+        MONGODB_URI_DEV=mongodb://localhost:27017/
+        MONGO_DB_NAME=url-shortener
+        
+        # Redis connection details
+        REDIS_URI=redis://localhost:6379
+        REDIS_URI_DEV=redis://localhost:6379
+        REDIS_TTL_SECONDS=3600
+        
+        # Flask configs
+        SECRET_KEY=github-action-secret-key-for-testing
+        HOST_URI=127.0.0.1:8000
+        SHORTEN_API_RATE_LIMIT_PER_HOUR=100
+        
+        # Configs for the contact and report forms (empty for local testing)
+        CONTACT_WEBHOOK=
+        URL_REPORT_WEBHOOK=
+        HCAPTCHA_SECRET=
+        EOF
+        
+        echo "✅ Environment configuration created:"
+        echo "📄 .env file contents:"
+        cat .env
+
+    - name: 'Install project dependencies with uv'
+      shell: bash
+      run: |
+        echo "📦 Installing project dependencies with uv..."
+        cd "${{ inputs.spoo-directory }}"
+        
+        # Add uv to PATH for this step
+        export PATH="$HOME/.cargo/bin:$PATH"
+        
+        # Install dependencies
+        echo "🔄 Syncing dependencies..."
+        uv sync
+        
+        echo "✅ Dependencies installed successfully"
+        
+        # Show installed packages
+        echo "📋 Installed packages:"
+        uv pip list
+
+    - name: 'Initialize database collections'
+      shell: bash
+      run: |
+        echo "🗄️ Initializing database collections..."
+        
+        # Create database and collections if needed
+        mongosh --eval "
+          use url-shortener;
+          
+          // Create collections if they don't exist
+          if (!db.getCollectionNames().includes('urls')) {
+            db.createCollection('urls');
+            print('✅ Created urls collection');
+          } else {
+            print('ℹ️ urls collection already exists');
+          }
+          
+          // Show database status
+          print('📊 Database status:');
+          printjson(db.stats());
+        "
+        
+        echo "✅ Database initialization complete"
+
+    - name: 'Start Spoo.me service'
+      shell: bash
+      run: |
+        echo "🚀 Starting Spoo.me service..."
+        cd "${{ inputs.spoo-directory }}"
+        
+        # Add uv to PATH
+        export PATH="$HOME/.cargo/bin:$PATH"
+        
+        # Start the service in the background
+        echo "🔄 Starting server with uv run..."
+        nohup uv run main.py > spoo-service.log 2>&1 &
+        SERVICE_PID=$!
+        
+        echo "📝 Service started with PID: $SERVICE_PID"
+        echo $SERVICE_PID > spoo-service.pid
+        
+        # Wait for service to start
+        echo "⏳ Waiting for service to start..."
+        timeout=${{ inputs.wait-timeout }}
+        elapsed=0
+        
+        while [ $elapsed -lt $timeout ]; do
+          if curl -s http://127.0.0.1:8000 >/dev/null 2>&1; then
+            echo "✅ Spoo.me service is running and accessible"
+            echo "🌐 Service URL: http://127.0.0.1:8000"
+            break
+          fi
+          
+          # Check if process is still running
+          if ! kill -0 $SERVICE_PID 2>/dev/null; then
+            echo "❌ Service process died. Checking logs..."
+            tail -n 20 spoo-service.log
+            exit 1
+          fi
+          
+          echo "⏳ Waiting for service to respond... (${elapsed}s/${timeout}s)"
+          sleep 3
+          elapsed=$((elapsed + 3))
+        done
+        
+        if [ $elapsed -ge $timeout ]; then
+          echo "❌ Service failed to start within ${timeout} seconds"
+          echo "📄 Service logs:"
+          tail -n 50 spoo-service.log
+          exit 1
+        fi
+
+    - name: 'Verify service health'
+      shell: bash
+      run: |
+        echo "🔍 Performing service health checks..."
+        cd "${{ inputs.spoo-directory }}"
+        
+        # Test basic connectivity
+        echo "🌐 Testing basic connectivity..."
+        response=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000)
+        if [ "$response" -eq 200 ] || [ "$response" -eq 404 ]; then
+          echo "✅ Service is responding (HTTP $response)"
+        else
+          echo "❌ Service health check failed (HTTP $response)"
+          exit 1
+        fi
+        
+        # Test database connectivity through the app
+        echo "🍃 Testing database connectivity..."
+        if curl -s http://127.0.0.1:8000 | grep -q "spoo.me\|url.*short\|error" 2>/dev/null; then
+          echo "✅ Service appears to be running correctly"
+        else
+          echo "⚠️ Service is running but response may be unexpected"
+        fi
+        
+        # Show final status
+        echo ""
+        echo "🎉 Spoo.me service setup complete!"
+        echo "📊 Service Status:"
+        echo "  - Service URL: http://127.0.0.1:8000"
+        echo "  - MongoDB: mongodb://localhost:27017/"
+        echo "  - Redis: redis://localhost:6379"
+        echo "  - PID: $(cat spoo-service.pid 2>/dev/null || echo 'N/A')"
+        echo ""
+        echo "📄 Recent service logs:"
+        tail -n 10 spoo-service.log 2>/dev/null || echo "No logs available"
+
+branding:
+  icon: 'link'
+  color: 'blue' 

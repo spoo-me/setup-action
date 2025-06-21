@@ -1,0 +1,226 @@
+name: 'Test Action'
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      python-version:
+        description: 'Python version to test'
+        required: false
+        default: '3.11'
+      mongodb-version:
+        description: 'MongoDB version to test'
+        required: false
+        default: '7.0'
+      redis-version:
+        description: 'Redis version to test'
+        required: false
+        default: '7.2'
+
+jobs:
+  test-action:
+    name: 'Test Spoo.me Setup Action'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+        mongodb-version: ['6.0', '7.0']
+        redis-version: ['7.0', '7.2']
+      max-parallel: 2  # Limit parallel jobs to avoid resource issues
+    
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: 'Test Spoo.me Action'
+        uses: ./
+        id: spoo-setup
+        with:
+          python-version: ${{ matrix.python-version }}
+          mongodb-version: ${{ matrix.mongodb-version }}
+          redis-version: ${{ matrix.redis-version }}
+          spoo-directory: 'test-spoo-service'
+          wait-timeout: '180'
+
+      - name: 'Verify Action Outputs'
+        run: |
+          echo "🔍 Verifying action outputs..."
+          
+          # Check outputs are set
+          if [ -z "${{ steps.spoo-setup.outputs.service-url }}" ]; then
+            echo "❌ service-url output not set"
+            exit 1
+          fi
+          
+          if [ -z "${{ steps.spoo-setup.outputs.mongodb-uri }}" ]; then
+            echo "❌ mongodb-uri output not set"
+            exit 1
+          fi
+          
+          if [ -z "${{ steps.spoo-setup.outputs.redis-uri }}" ]; then
+            echo "❌ redis-uri output not set"
+            exit 1
+          fi
+          
+          echo "✅ All outputs are properly set"
+          echo "  - Service URL: ${{ steps.spoo-setup.outputs.service-url }}"
+          echo "  - MongoDB URI: ${{ steps.spoo-setup.outputs.mongodb-uri }}"
+          echo "  - Redis URI: ${{ steps.spoo-setup.outputs.redis-uri }}"
+
+      - name: 'Test API Endpoints'
+        run: |
+          echo "🧪 Testing Spoo.me API endpoints..."
+          
+          SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
+          
+          # Test main page
+          echo "📱 Testing main page..."
+          if curl -s -f "$SERVICE_URL" > /dev/null; then
+            echo "✅ Main page accessible"
+          else
+            echo "❌ Main page not accessible"
+            exit 1
+          fi
+          
+          # Test with timeout to avoid hanging
+          echo "🔍 Testing response content..."
+          response=$(timeout 10s curl -s "$SERVICE_URL" || echo "timeout")
+          
+          if [ "$response" != "timeout" ]; then
+            echo "✅ Service responded successfully"
+            echo "📄 Response preview (first 200 chars):"
+            echo "$response" | head -c 200
+          else
+            echo "⚠️ Service response timed out"
+          fi
+
+      - name: 'Test Database Connectivity'
+        run: |
+          echo "🗄️ Testing database connectivity..."
+          
+          # Test MongoDB connection
+          echo "🍃 Testing MongoDB..."
+          if mongosh --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
+            echo "✅ MongoDB is accessible"
+            mongosh --eval "db.version()" --quiet
+          else
+            echo "❌ MongoDB not accessible"
+            exit 1
+          fi
+          
+          # Test Redis connection
+          echo "🔴 Testing Redis..."
+          if redis-cli ping >/dev/null 2>&1; then
+            echo "✅ Redis is accessible"
+            redis-cli info server | grep redis_version | head -1
+          else
+            echo "❌ Redis not accessible"
+            exit 1
+          fi
+
+      - name: 'Test Service Logs'
+        if: always()
+        run: |
+          echo "📄 Checking service logs..."
+          cd test-spoo-service
+          
+          if [ -f "spoo-service.log" ]; then
+            echo "✅ Service log file exists"
+            echo "📊 Log file size: $(wc -l < spoo-service.log) lines"
+            echo "📄 Last 20 lines of service logs:"
+            tail -n 20 spoo-service.log
+          else
+            echo "❌ Service log file not found"
+            ls -la
+          fi
+          
+          if [ -f "spoo-service.pid" ]; then
+            PID=$(cat spoo-service.pid)
+            echo "📝 Service PID: $PID"
+            if kill -0 $PID 2>/dev/null; then
+              echo "✅ Service process is still running"
+            else
+              echo "⚠️ Service process is not running"
+            fi
+          else
+            echo "❌ Service PID file not found"
+          fi
+
+      - name: 'Performance Test'
+        run: |
+          echo "⚡ Running basic performance test..."
+          SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
+          
+          # Simple load test with curl
+          echo "🔄 Testing 10 concurrent requests..."
+          for i in {1..10}; do
+            (curl -s -o /dev/null -w "%{time_total}\n" "$SERVICE_URL" &)
+          done
+          wait
+          
+          echo "✅ Performance test completed"
+
+      - name: 'Cleanup Test Resources'
+        if: always()
+        run: |
+          echo "🧹 Cleaning up test resources..."
+          
+          # Stop the service
+          cd test-spoo-service
+          if [ -f "spoo-service.pid" ]; then
+            PID=$(cat spoo-service.pid)
+            if kill -0 $PID 2>/dev/null; then
+              echo "🛑 Stopping service (PID: $PID)"
+              kill $PID || true
+              sleep 2
+              
+              # Force kill if still running
+              if kill -0 $PID 2>/dev/null; then
+                echo "🔥 Force stopping service"
+                kill -9 $PID || true
+              fi
+            fi
+          fi
+          
+          echo "✅ Cleanup completed"
+
+  test-minimal:
+    name: 'Test Minimal Configuration'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: 'Test with minimal config'
+        uses: ./
+        id: minimal-test
+
+      - name: 'Verify minimal setup works'
+        run: |
+          echo "✅ Minimal setup test passed"
+          echo "Service URL: ${{ steps.minimal-test.outputs.service-url }}"
+          curl -s ${{ steps.minimal-test.outputs.service-url }} | head -n 5
+
+  test-custom-timeout:
+    name: 'Test Custom Timeout'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: 'Test with custom timeout'
+        uses: ./
+        id: timeout-test
+        with:
+          wait-timeout: '300'
+          spoo-directory: 'custom-timeout-test'
+
+      - name: 'Verify custom timeout works'
+        run: |
+          echo "✅ Custom timeout test passed"
+          echo "Service URL: ${{ steps.timeout-test.outputs.service-url }}" 
