@@ -273,7 +273,7 @@ This action follows semantic versioning. Available versions:
 - `@v1.0.0` - Specific version
 - `@main` - Latest development version (not recommended for production)
 
-## 🚀 Publishing to GitHub Marketplace
+<!-- ## 🚀 Publishing to GitHub Marketplace
 
 To publish this action to GitHub Marketplace:
 
@@ -310,7 +310,7 @@ jobs:
           release_name: Release ${{ github.ref }}
           draft: false
           prerelease: false
-```
+``` -->
 
 ## 🤝 Contributing
 
@@ -330,7 +330,3 @@ This project is open source and available under the [MIT License](LICENSE).
 - [Supercharge MongoDB Action](https://github.com/supercharge/mongodb-github-action) - MongoDB setup
 - [Supercharge Redis Action](https://github.com/supercharge/redis-github-action) - Redis setup
 - [UV](https://github.com/astral-sh/uv) - Fast Python package management
-
-## 🏷️ Tags
-
-`github-actions` `spoo-me` `url-shortener` `mongodb` `redis` `python` `flask` `automation` `testing` `ci-cd` `marketplace`

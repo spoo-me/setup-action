@@ -1,4 +1,4 @@
-name: 'Setup Spoo.me Service'
+name: 'Setup Spoo.me'
 description: 'Run spoo.me URL shortener service locally with MongoDB, Redis, and all dependencies'
 author: 'spoo.me team'
 
@@ -6,7 +6,7 @@ inputs:
   python-version:
     description: 'Python version to use'
     required: false
-    default: '3.11'
+    default: '3.12'
   mongodb-version:
     description: 'MongoDB version to use'
     required: false
@@ -103,9 +103,9 @@ runs:
         fi
         
         # Give it a moment to fully initialize
-        echo "⏳ Giving MongoDB extra time to initialize..."
-        sleep 5
-        echo "✅ MongoDB should be ready!"
+        # echo "⏳ Giving MongoDB extra time to initialize..."
+        # sleep 5
+        # echo "✅ MongoDB should be ready!"
 
     - name: 'Wait for Redis to be ready'
       shell: bash
@@ -130,7 +130,7 @@ runs:
           exit 1
         fi
         
-        echo "✅ Redis is ready!"
+        # echo "✅ Redis is ready!"
 
     - name: 'Clone Spoo.me repository'
       shell: bash
@@ -309,14 +309,6 @@ runs:
         else
           echo "❌ Service health check failed (HTTP $response)"
           exit 1
-        fi
-        
-        # Test database connectivity through the app
-        echo "🍃 Testing database connectivity..."
-        if curl -s http://127.0.0.1:8000 | grep -q "spoo.me\|url.*short\|error" 2>/dev/null; then
-          echo "✅ Service appears to be running correctly"
-        else
-          echo "⚠️ Service is running but response may be unexpected"
         fi
         
         # Show final status
