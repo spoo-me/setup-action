@@ -1,4 +1,4 @@
-# Setup Spoo.me Action
+# Spoo.me Setup Action
 
 A reusable GitHub Action that automatically sets up the [spoo.me URL shortener service](https://github.com/spoo-me/url-shortener) locally within any GitHub Actions workflow. This action handles all the complexity of setting up MongoDB, Redis, Python dependencies, and the spoo.me service itself.
 
@@ -26,9 +26,6 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
       - name: Setup Spoo.me Service
         uses: spoo-me/setup-action@v1
         id: spoo-setup
