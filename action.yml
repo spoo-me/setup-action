@@ -340,7 +340,7 @@ runs:
 
         # Use the /health endpoint for a proper check
         echo "🌐 Checking /health endpoint..."
-        health_response=$(curl -s http://127.0.0.1:8000/health)
+        health_response=$(curl -s --max-time 10 http://127.0.0.1:8000/health)
         echo "📋 Health response: $health_response"
 
         # Parse the status field
@@ -354,14 +354,14 @@ runs:
           exit 1
         fi
 
-        if [ "$health_status" = "unhealthy" ]; then
-          echo "❌ Service is unhealthy"
+        if [ "$health_status" = "healthy" ] || [ "$health_status" = "degraded" ]; then
+          echo "✅ Service status: $health_status"
+        else
+          echo "❌ Unexpected service status: $health_status"
           echo "📄 Service logs:"
           tail -n 20 spoo-service.log 2>/dev/null
           exit 1
         fi
-
-        echo "✅ Service status: $health_status"
 
         # Show final status
         echo ""
