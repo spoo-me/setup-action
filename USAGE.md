@@ -6,7 +6,7 @@ Add this step to your workflow:
 
 ```yaml
 - name: Setup Spoo.me Service
-  uses: spoo-me/setup-action@v1
+  uses: spoo-me/setup-action@v2
   id: spoo
 ```
 
@@ -14,7 +14,7 @@ Add this step to your workflow:
 
 ```yaml
 - name: Setup Spoo.me Service
-  uses: spoo-me/setup-action@v1
+  uses: spoo-me/setup-action@v2
   id: spoo
   with:
     python-version: '3.13'
@@ -49,7 +49,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Spoo.me
-        uses: spoo-me/setup-action@v1
+        uses: spoo-me/setup-action@v2
         id: spoo
 
       - name: Verify health

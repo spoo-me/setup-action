@@ -22,7 +22,7 @@ A reusable GitHub Action that automatically sets up the [spoo.me URL shortener s
 
 # 🔥 Features
 
-- `Reusable` - Use in any repository with `uses: spoo-me/setup-action@v1` 🔄
+- `Reusable` - Use in any repository with `uses: spoo-me/setup-action@v2` 🔄
 - `Complete Environment` - Automatically installs and configures Python, MongoDB, and Redis ⚡
 - `FastAPI + Uvicorn` - Starts the service with uvicorn for production-grade performance 🚀
 - `Health Monitoring` - Verifies all services via the `/health` endpoint before proceeding 🔍
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Setup Spoo.me Service
-        uses: spoo-me/setup-action@v1
+        uses: spoo-me/setup-action@v2
         id: spoo-setup
 
       - name: Run tests against Spoo.me
@@ -68,7 +68,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Spoo.me Service
-        uses: spoo-me/setup-action@v1
+        uses: spoo-me/setup-action@v2
         id: spoo-setup
         with:
           python-version: '3.13'
@@ -168,7 +168,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Spoo.me
-        uses: spoo-me/setup-action@v1
+        uses: spoo-me/setup-action@v2
         id: spoo
 
       - name: Run integration tests
@@ -200,7 +200,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Spoo.me
-        uses: spoo-me/setup-action@v1
+        uses: spoo-me/setup-action@v2
         with:
           python-version: ${{ matrix.python-version }}
           mongodb-version: ${{ matrix.mongodb-version }}
@@ -220,7 +220,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Spoo.me
-        uses: spoo-me/setup-action@v1
+        uses: spoo-me/setup-action@v2
         with:
           wait-timeout: '300'
         id: spoo
@@ -283,8 +283,9 @@ setup-action/
 
 This action follows semantic versioning. Available versions:
 
-- `@v1` - Latest stable v1.x release (recommended)
-- `@v1.0.0` - Specific version
+- `@v2` - Latest stable v2.x release (recommended)
+- `@v2.0.0` - Specific version
+- `@v1` - Legacy (Flask-based spoo.me)
 - `@main` - Latest development version (not recommended for production)
 
 # 🤝 Contributing
