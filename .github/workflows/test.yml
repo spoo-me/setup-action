@@ -10,11 +10,11 @@ on:
       python-version:
         description: 'Python version to test'
         required: false
-        default: '3.12'
+        default: '3.13'
       mongodb-version:
         description: 'MongoDB version to test'
         required: false
-        default: '8.0'
+        default: '7.0'
       redis-version:
         description: 'Redis version to test'
         required: false
@@ -26,11 +26,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.11', '3.12']
-        mongodb-version: ['6.0', '7.0']
+        python-version: ['3.12', '3.13']
+        mongodb-version: ['7.0', '8.0']
         redis-version: ['7.0', '7.2']
       max-parallel: 2  # Limit parallel jobs to avoid resource issues
-    
+
     steps:
       - name: 'Checkout repository'
         uses: actions/checkout@v4
@@ -48,62 +48,81 @@ jobs:
       - name: 'Verify Action Outputs'
         run: |
           echo "🔍 Verifying action outputs..."
-          
+
           # Check outputs are set
           if [ -z "${{ steps.spoo-setup.outputs.service-url }}" ]; then
             echo "❌ service-url output not set"
             exit 1
           fi
-          
+
           if [ -z "${{ steps.spoo-setup.outputs.mongodb-uri }}" ]; then
             echo "❌ mongodb-uri output not set"
             exit 1
           fi
-          
+
           if [ -z "${{ steps.spoo-setup.outputs.redis-uri }}" ]; then
             echo "❌ redis-uri output not set"
             exit 1
           fi
-          
+
+          if [ -z "${{ steps.spoo-setup.outputs.health-url }}" ]; then
+            echo "❌ health-url output not set"
+            exit 1
+          fi
+
           echo "✅ All outputs are properly set"
           echo "  - Service URL: ${{ steps.spoo-setup.outputs.service-url }}"
           echo "  - MongoDB URI: ${{ steps.spoo-setup.outputs.mongodb-uri }}"
           echo "  - Redis URI: ${{ steps.spoo-setup.outputs.redis-uri }}"
+          echo "  - Health URL: ${{ steps.spoo-setup.outputs.health-url }}"
 
-      - name: 'Test API Endpoints'
+      - name: 'Test Health Endpoint'
         run: |
-          echo "🧪 Testing Spoo.me API endpoints..."
-          
-          SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
-          
-          # Test main page
-          echo "📱 Testing main page..."
-          if curl -s -f "$SERVICE_URL" > /dev/null; then
-            echo "✅ Main page accessible"
+          echo "🏥 Testing health endpoint..."
+
+          HEALTH_URL="${{ steps.spoo-setup.outputs.health-url }}"
+
+          health_response=$(curl -s "$HEALTH_URL")
+          echo "📋 Health response: $health_response"
+
+          health_status=$(echo "$health_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['status'])" 2>/dev/null)
+
+          if [ -z "$health_status" ]; then
+            echo "❌ Failed to parse health response"
+            echo "📋 Raw response: $health_response"
+            exit 1
+          elif [ "$health_status" = "healthy" ]; then
+            echo "✅ Service is healthy"
+          elif [ "$health_status" = "degraded" ]; then
+            echo "⚠️ Service is degraded (Redis may not be connected)"
           else
-            echo "❌ Main page not accessible"
+            echo "❌ Service is unhealthy: $health_status"
             exit 1
           fi
-          
-          # Test with timeout to avoid hanging
-          echo "🔍 Testing response content..."
-          response=$(timeout 10s curl -s "$SERVICE_URL" || echo "timeout")
-          
-          if [ "$response" != "timeout" ]; then
-            echo "✅ Service responded successfully"
-            echo "📄 Response preview (first 200 chars):"
-            echo "$response" | head -c 200
+
+      - name: 'Test Main Page'
+        run: |
+          echo "📱 Testing main page..."
+
+          SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
+
+          response_code=$(curl -s -o /dev/null -w "%{http_code}" "$SERVICE_URL")
+          echo "🔍 Main page response code: $response_code"
+
+          if [ "$response_code" = "200" ]; then
+            echo "✅ Main page accessible"
           else
-            echo "⚠️ Service response timed out"
+            echo "❌ Main page returned HTTP $response_code"
+            exit 1
           fi
 
-      - name: 'Test URL Shortening API'
+      - name: 'Test Legacy URL Shortening (POST /)'
         run: |
-          echo "🔗 Testing URL shortening functionality..."
-          
+          echo "🔗 Testing legacy URL shortening..."
+
           SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
-          
-          # Create a short URL using POST request
+
+          # Create a short URL via legacy endpoint (form data + Accept: application/json)
           echo "📤 Creating short URL for https://example.com..."
           api_response=$(curl -s \
             --request POST \
@@ -112,59 +131,163 @@ jobs:
             --header 'Content-Type: application/x-www-form-urlencoded' \
             --data 'url=https://example.com' \
             --max-time 10)
-          
-          echo "📥 API Response:"
+
+          echo "📥 Legacy API Response:"
           echo "$api_response"
-          
-          # Check if response contains expected fields
-          if echo "$api_response" | grep -q "short_url" && echo "$api_response" | grep -q "original_url"; then
-            echo "✅ API response contains expected fields"
-            
-            # Extract the short URL for redirect test
-            short_url=$(echo "$api_response" | grep -o '"short_url":"[^"]*"' | cut -d'"' -f4)
-            echo "🔗 Extracted short URL: $short_url"
-            
-            if [ -n "$short_url" ]; then
-              # Test redirect functionality
-              echo "🔄 Testing redirect functionality..."
-              
-              # Use different user agent and IP simulation
-              redirect_response=$(curl -s \
-                --max-time 10 \
-                --header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3' \
-                --header 'X-Forwarded-For: 110.33.122.75' \
-                --write-out "%{http_code}" \
-                --output /dev/null \
-                "$short_url")
-              
-              echo "🔍 Redirect response code: $redirect_response"
-              
-              if [ "$redirect_response" = "302" ] || [ "$redirect_response" = "301" ]; then
-                echo "✅ Redirect working correctly (HTTP $redirect_response)"
-              else
-                echo "⚠️ Unexpected redirect response: $redirect_response"
-                echo "🔍 Testing with full response to debug..."
-                curl -s -I "$short_url" | head -n 5
-                echo "📄 Original API response for debugging:"
-                echo "$api_response"
-              fi
-            else
-              echo "❌ Could not extract short URL from response"
-              exit 1
-            fi
-          else
-            echo "❌ API response does not contain expected fields"
-            echo "🔍 Full response for debugging:"
-            echo "$api_response"
+
+          # Validate response fields
+          short_url=$(echo "$api_response" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d['short_url'])" 2>/dev/null)
+          original_url=$(echo "$api_response" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d['original_url'])" 2>/dev/null)
+
+          if [ -z "$short_url" ] || [ -z "$original_url" ]; then
+            echo "❌ Legacy API response missing expected fields (short_url, original_url)"
             exit 1
           fi
+          echo "✅ Legacy shorten returned: $short_url"
+
+          # Extract short code for later stats test
+          legacy_short_code=$(echo "$short_url" | python3 -c "import sys; print(sys.stdin.read().strip().split('/')[-1])")
+          echo "LEGACY_SHORT_CODE=$legacy_short_code" >> $GITHUB_ENV
+
+          # Test redirect
+          echo "🔄 Testing redirect for $short_url..."
+          redirect_code=$(curl -s \
+            --max-time 10 \
+            --header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' \
+            --header 'X-Forwarded-For: 110.33.122.75' \
+            --write-out "%{http_code}" \
+            --output /dev/null \
+            "$short_url")
+
+          echo "🔍 Redirect response code: $redirect_code"
+          if [ "$redirect_code" = "301" ] || [ "$redirect_code" = "302" ] || [ "$redirect_code" = "307" ]; then
+            echo "✅ Legacy redirect working (HTTP $redirect_code)"
+          else
+            echo "❌ Unexpected redirect response: $redirect_code"
+            curl -s -I "$short_url" | head -n 5
+            exit 1
+          fi
+
+      - name: 'Test Legacy Stats (POST /stats/<code>)'
+        run: |
+          echo "📊 Testing legacy stats endpoint..."
+
+          SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
+
+          # Query stats for the URL we just created
+          echo "📤 Fetching stats for short code: $LEGACY_SHORT_CODE"
+          stats_response=$(curl -s \
+            --request POST \
+            --url "$SERVICE_URL/stats/$LEGACY_SHORT_CODE" \
+            --max-time 10)
+
+          echo "📥 Legacy Stats Response:"
+          echo "$stats_response" | python3 -m json.tool 2>/dev/null || echo "$stats_response"
+
+          # Validate it returned URL data (should have 'url' and 'total-clicks' fields)
+          total_clicks=$(echo "$stats_response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('total-clicks', 'MISSING'))" 2>/dev/null)
+
+          if [ "$total_clicks" = "MISSING" ]; then
+            echo "❌ Legacy stats response missing 'total-clicks' field"
+            exit 1
+          fi
+          echo "✅ Legacy stats working (total-clicks: $total_clicks)"
+
+      - name: 'Test V1 API Shorten (POST /api/v1/shorten)'
+        run: |
+          echo "🔗 Testing V1 API URL shortening..."
+
+          SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
+
+          # Create a short URL via V1 API (JSON body)
+          echo "📤 Creating short URL via /api/v1/shorten..."
+          api_response=$(curl -s \
+            --request POST \
+            --url "$SERVICE_URL/api/v1/shorten" \
+            --header 'Content-Type: application/json' \
+            --data '{"url": "https://github.com/spoo-me"}' \
+            --max-time 10)
+
+          echo "📥 V1 API Response:"
+          echo "$api_response" | python3 -m json.tool 2>/dev/null || echo "$api_response"
+
+          # Check HTTP status (should be 201)
+          status_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            --request POST \
+            --url "$SERVICE_URL/api/v1/shorten" \
+            --header 'Content-Type: application/json' \
+            --data '{"url": "https://github.com/spoo-me/url-shortener"}' \
+            --max-time 10)
+
+          if [ "$status_code" != "201" ]; then
+            echo "❌ V1 API returned HTTP $status_code (expected 201)"
+            exit 1
+          fi
+
+          # Validate response fields
+          v1_alias=$(echo "$api_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['alias'])" 2>/dev/null)
+          v1_short_url=$(echo "$api_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['short_url'])" 2>/dev/null)
+          v1_long_url=$(echo "$api_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['long_url'])" 2>/dev/null)
+          v1_status=$(echo "$api_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['status'])" 2>/dev/null)
+
+          if [ -z "$v1_alias" ] || [ -z "$v1_short_url" ] || [ -z "$v1_long_url" ]; then
+            echo "❌ V1 API response missing expected fields (alias, short_url, long_url)"
+            exit 1
+          fi
+          echo "✅ V1 API shorten working: $v1_short_url (status: $v1_status)"
+
+          # Save alias for stats test
+          echo "V1_SHORT_CODE=$v1_alias" >> $GITHUB_ENV
+
+          # Test redirect for V1-created URL
+          echo "🔄 Testing redirect for V1 URL..."
+          redirect_code=$(curl -s \
+            --max-time 10 \
+            --header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' \
+            --header 'X-Forwarded-For: 8.8.8.8' \
+            --write-out "%{http_code}" \
+            --output /dev/null \
+            "$v1_short_url")
+
+          if [ "$redirect_code" = "301" ] || [ "$redirect_code" = "302" ] || [ "$redirect_code" = "307" ]; then
+            echo "✅ V1 redirect working (HTTP $redirect_code)"
+          else
+            echo "❌ Unexpected redirect response: $redirect_code"
+            curl -s -I "$v1_short_url" | head -n 5
+            exit 1
+          fi
+
+      - name: 'Test V1 API Stats (GET /api/v1/stats)'
+        run: |
+          echo "📊 Testing V1 API stats endpoint..."
+
+          SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
+
+          # Query anon stats for the V1 URL we created
+          echo "📤 Fetching stats for: $V1_SHORT_CODE"
+          stats_response=$(curl -s \
+            --url "$SERVICE_URL/api/v1/stats?scope=anon&short_code=$V1_SHORT_CODE&group_by=time&metrics=clicks,unique_clicks" \
+            --max-time 10)
+
+          status_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            --url "$SERVICE_URL/api/v1/stats?scope=anon&short_code=$V1_SHORT_CODE" \
+            --max-time 10)
+
+          echo "📥 V1 Stats Response (HTTP $status_code):"
+          echo "$stats_response" | python3 -m json.tool 2>/dev/null || echo "$stats_response"
+
+          if [ "$status_code" != "200" ]; then
+            echo "❌ V1 stats returned HTTP $status_code (expected 200)"
+            exit 1
+          fi
+          echo "✅ V1 API stats working"
 
       - name: 'Test Service Logs'
         if: always()
         run: |
           echo "📄 Checking service logs..."
           cd test-spoo-service
-          
+
           if [ -f "spoo-service.log" ]; then
             echo "✅ Service log file exists"
             echo "📊 Log file size: $(wc -l < spoo-service.log) lines"
@@ -174,7 +297,7 @@ jobs:
             echo "❌ Service log file not found"
             ls -la
           fi
-          
+
           if [ -f "spoo-service.pid" ]; then
             PID=$(cat spoo-service.pid)
             echo "📝 Service PID: $PID"
@@ -187,25 +310,11 @@ jobs:
             echo "❌ Service PID file not found"
           fi
 
-      - name: 'Performance Test'
-        run: |
-          echo "⚡ Running basic performance test..."
-          SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
-          
-          # Simple load test with curl
-          echo "🔄 Testing 10 concurrent requests..."
-          for i in {1..10}; do
-            (curl -s -o /dev/null -w "%{time_total}\n" "$SERVICE_URL" &)
-          done
-          wait
-          
-          echo "✅ Performance test completed"
-
       - name: 'Cleanup Test Resources'
         if: always()
         run: |
           echo "🧹 Cleaning up test resources..."
-          
+
           # Stop the service
           cd test-spoo-service
           if [ -f "spoo-service.pid" ]; then
@@ -214,7 +323,7 @@ jobs:
               echo "🛑 Stopping service (PID: $PID)"
               kill $PID || true
               sleep 2
-              
+
               # Force kill if still running
               if kill -0 $PID 2>/dev/null; then
                 echo "🔥 Force stopping service"
@@ -222,13 +331,13 @@ jobs:
               fi
             fi
           fi
-          
+
           echo "✅ Cleanup completed"
 
   test-minimal:
     name: 'Test Minimal Configuration'
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: 'Checkout repository'
         uses: actions/checkout@v4
@@ -241,12 +350,27 @@ jobs:
         run: |
           echo "✅ Minimal setup test passed"
           echo "Service URL: ${{ steps.minimal-test.outputs.service-url }}"
-          curl -s ${{ steps.minimal-test.outputs.service-url }} | head -n 5
+
+          # Use health endpoint for verification
+          health_response=$(curl -s ${{ steps.minimal-test.outputs.health-url }})
+          echo "Health: $health_response"
+
+          health_status=$(echo "$health_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['status'])" 2>/dev/null)
+          if [ "$health_status" = "healthy" ] || [ "$health_status" = "degraded" ]; then
+            echo "✅ Service is running ($health_status)"
+          elif [ -z "$health_status" ]; then
+            echo "❌ Failed to parse health response"
+            echo "📋 Raw response: $health_response"
+            exit 1
+          else
+            echo "❌ Unexpected service status: $health_status"
+            exit 1
+          fi
 
   test-custom-timeout:
     name: 'Test Custom Timeout'
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: 'Checkout repository'
         uses: actions/checkout@v4
@@ -261,4 +385,17 @@ jobs:
       - name: 'Verify custom timeout works'
         run: |
           echo "✅ Custom timeout test passed"
-          echo "Service URL: ${{ steps.timeout-test.outputs.service-url }}" 
+          echo "Service URL: ${{ steps.timeout-test.outputs.service-url }}"
+
+          health_response=$(curl -s ${{ steps.timeout-test.outputs.health-url }})
+          health_status=$(echo "$health_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['status'])" 2>/dev/null)
+          if [ "$health_status" = "healthy" ] || [ "$health_status" = "degraded" ]; then
+            echo "✅ Health: $health_status"
+          elif [ -z "$health_status" ]; then
+            echo "❌ Failed to parse health response"
+            echo "📋 Raw response: $health_response"
+            exit 1
+          else
+            echo "❌ Unexpected service status: $health_status"
+            exit 1
+          fi
