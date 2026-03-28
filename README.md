@@ -101,7 +101,7 @@ jobs:
 |--------|-------------|---------|
 | `service-url` | URL where the spoo.me service is running | `http://127.0.0.1:8000` |
 | `health-url` | URL for the health check endpoint | `http://127.0.0.1:8000/health` |
-| `mongodb-uri` | MongoDB connection URI | `mongodb://localhost:27017/` |
+| `mongodb-uri` | MongoDB connection URI (includes database name) | `mongodb://localhost:27017/url-shortener` |
 | `redis-uri` | Redis connection URI | `redis://localhost:6379` |
 
 # 🔧 Environment Configuration
