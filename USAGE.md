@@ -17,7 +17,7 @@ Add this step to your workflow:
   uses: spoo-me/setup-action@v1
   id: spoo
   with:
-    python-version: '3.12'
+    python-version: '3.13'
     mongodb-version: '7.0'
     redis-version: '7.2'
     wait-timeout: '180'
@@ -31,7 +31,8 @@ After setup, use the outputs:
 - name: Test the service
   run: |
     echo "Service URL: ${{ steps.spoo.outputs.service-url }}"
-    curl ${{ steps.spoo.outputs.service-url }}
+    echo "Health: ${{ steps.spoo.outputs.health-url }}"
+    curl -s ${{ steps.spoo.outputs.health-url }}
 ```
 
 ## Complete Example
@@ -46,13 +47,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Spoo.me
         uses: spoo-me/setup-action@v1
         id: spoo
-        
+
+      - name: Verify health
+        run: |
+          curl -s ${{ steps.spoo.outputs.health-url }}
+
       - name: Run tests
         run: |
           # Your tests here
           curl ${{ steps.spoo.outputs.service-url }}
-``` 
+```

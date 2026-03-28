@@ -6,7 +6,7 @@ inputs:
   python-version:
     description: 'Python version to use'
     required: false
-    default: '3.12'
+    default: '3.13'
   mongodb-version:
     description: 'MongoDB version to use'
     required: false
@@ -30,10 +30,13 @@ outputs:
     value: 'http://127.0.0.1:8000'
   mongodb-uri:
     description: 'MongoDB connection URI'
-    value: 'mongodb://localhost:27017/url-shortener'
+    value: 'mongodb://localhost:27017/'
   redis-uri:
     description: 'Redis connection URI'
     value: 'redis://localhost:6379'
+  health-url:
+    description: 'URL for the health check endpoint'
+    value: 'http://127.0.0.1:8000/health'
 
 runs:
   using: 'composite'
@@ -51,7 +54,7 @@ runs:
         echo ""
 
     - name: 'Setup Python'
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
 
@@ -78,11 +81,10 @@ runs:
       shell: bash
       run: |
         echo "🍃 Waiting for MongoDB to be ready..."
-        
-        # Simple approach: wait for port to be available
+
         timeout=60
         elapsed=0
-        
+
         while [ $elapsed -lt $timeout ]; do
           if python3 -c "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 27017)); s.close()" 2>/dev/null; then
             echo "✅ MongoDB port 27017 is responding"
@@ -92,7 +94,7 @@ runs:
           sleep 2
           elapsed=$((elapsed + 2))
         done
-        
+
         if [ $elapsed -ge $timeout ]; then
           echo "❌ MongoDB failed to start within ${timeout} seconds"
           echo "🔍 Checking what's listening on port 27017..."
@@ -101,20 +103,15 @@ runs:
           docker ps | grep mongo || echo "No mongo containers found"
           exit 1
         fi
-        
-        # Give it a moment to fully initialize
-        # echo "⏳ Giving MongoDB extra time to initialize..."
-        # sleep 5
-        # echo "✅ MongoDB should be ready!"
 
     - name: 'Wait for Redis to be ready'
       shell: bash
       run: |
         echo "🔴 Waiting for Redis to be ready..."
-        
+
         timeout=30
         elapsed=0
-        
+
         while [ $elapsed -lt $timeout ]; do
           if python3 -c "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 6379)); s.close()" 2>/dev/null; then
             echo "✅ Redis port 6379 is responding"
@@ -124,13 +121,11 @@ runs:
           sleep 1
           elapsed=$((elapsed + 1))
         done
-        
+
         if [ $elapsed -ge $timeout ]; then
           echo "❌ Redis failed to start within ${timeout} seconds"
           exit 1
         fi
-        
-        # echo "✅ Redis is ready!"
 
     - name: 'Clone Spoo.me repository'
       shell: bash
@@ -140,14 +135,14 @@ runs:
           echo "🧹 Removing existing directory"
           rm -rf "${{ inputs.spoo-directory }}"
         fi
-        
+
         git clone https://github.com/spoo-me/url-shortener.git "${{ inputs.spoo-directory }}"
         cd "${{ inputs.spoo-directory }}"
-        
+
         echo "✅ Repository cloned successfully"
         echo "📂 Repository structure:"
         ls -la
-        
+
         if [ -f "pyproject.toml" ]; then
           echo "✅ Found pyproject.toml - uv compatible project"
         else
@@ -160,10 +155,10 @@ runs:
         echo "🚀 Installing uv (fast Python package manager)..."
         curl -LsSf https://astral.sh/uv/install.sh | sh
         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-        
+
         # Reload PATH for current session
         export PATH="$HOME/.cargo/bin:$PATH"
-        
+
         echo "✅ uv installation complete:"
         uv --version
 
@@ -172,49 +167,91 @@ runs:
       run: |
         echo "⚙️ Setting up environment configuration..."
         cd "${{ inputs.spoo-directory }}"
-        
+
+        # Generate a JWT secret for testing
+        JWT_SECRET=$(python3 -c "import os; print(os.urandom(32).hex())")
+        SECRET_KEY=$(python3 -c "import os; print(os.urandom(32).hex())")
+
         # Create .env file with required configurations
-        cat > .env << 'EOF'
-        # MongoDB connection details (optimized for single instance)
-        MONGODB_URI=mongodb://localhost:27017/url-shortener
-        MONGODB_URI_DEV=mongodb://localhost:27017/url-shortener
-        MONGO_DB_NAME=url-shortener
-        
+        cat > .env << EOF
+        # MongoDB connection details
+        MONGODB_URI=mongodb://localhost:27017/
+        DB_NAME=url-shortener
+
         # Redis connection details
         REDIS_URI=redis://localhost:6379
-        REDIS_URI_DEV=redis://localhost:6379
         REDIS_TTL_SECONDS=3600
-        
-        # Flask configs
-        SECRET_KEY=github-action-secret-key-for-testing
+
+        # Sentry (disabled for CI)
+        SENTRY_DSN=
+
+        # App configs
+        SECRET_KEY=${SECRET_KEY}
         HOST_URI=127.0.0.1:8000
-        SHORTEN_API_RATE_LIMIT_PER_HOUR=100
-        
-        # Configs for the contact and report forms (empty for local testing)
+        ENV=development
+        APP_URL=http://127.0.0.1:8000
+
+        # Logging
+        LOG_LEVEL=INFO
+        LOG_FORMAT=console
+
+        # Sampling rates
+        SAMPLE_RATE_REDIRECT=1.0
+        SAMPLE_RATE_STATS=1.0
+        SAMPLE_RATE_CACHE=1.0
+        SAMPLE_RATE_EXPORT=1.0
+
+        # Configs for the contact and report forms (empty for CI)
         CONTACT_WEBHOOK=
         URL_REPORT_WEBHOOK=
         HCAPTCHA_SECRET=
+
+        # JWT (HS256 mode for CI — no RSA keys needed)
+        JWT_ISSUER=spoo.me
+        JWT_AUDIENCE=spoo.me.api
+        ACCESS_TOKEN_TTL_SECONDS=3600
+        REFRESH_TOKEN_TTL_SECONDS=2592000
+        COOKIE_SECURE=false
+        JWT_PRIVATE_KEY=
+        JWT_PUBLIC_KEY=
+        JWT_SECRET=${JWT_SECRET}
+
+        # OAuth (disabled for CI)
+        GOOGLE_OAUTH_CLIENT_ID=
+        GOOGLE_OAUTH_CLIENT_SECRET=
+        GOOGLE_OAUTH_REDIRECT_URI=
+        GITHUB_OAUTH_CLIENT_ID=
+        GITHUB_OAUTH_CLIENT_SECRET=
+        GITHUB_OAUTH_REDIRECT_URI=
+        DISCORD_OAUTH_CLIENT_ID=
+        DISCORD_OAUTH_CLIENT_SECRET=
+        DISCORD_OAUTH_REDIRECT_URI=
+
+        # Email (disabled for CI)
+        ZEPTO_API_TOKEN=
+        ZEPTO_FROM_EMAIL=noreply@spoo.me
+        ZEPTO_FROM_NAME=spoo.me
+
+        GITHUB_REPO=spoo-me/url-shortener
         EOF
-        
-        echo "✅ Environment configuration created:"
-        echo "📄 .env file contents:"
-        cat .env
+
+        echo "✅ Environment configuration created"
 
     - name: 'Install project dependencies with uv'
       shell: bash
       run: |
         echo "📦 Installing project dependencies with uv..."
         cd "${{ inputs.spoo-directory }}"
-        
+
         # Add uv to PATH for this step
         export PATH="$HOME/.cargo/bin:$PATH"
-        
+
         # Install dependencies
         echo "🔄 Syncing dependencies..."
         uv sync
-        
+
         echo "✅ Dependencies installed successfully"
-        
+
         # Show installed packages
         echo "📋 Installed packages:"
         uv pip list
@@ -223,7 +260,7 @@ runs:
       shell: bash
       run: |
         echo "🔍 Verifying database services are ready..."
-        
+
         # Test MongoDB port accessibility
         if python3 -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost', 27017)); s.close()" 2>/dev/null; then
           echo "✅ MongoDB port 27017 is accessible"
@@ -233,8 +270,8 @@ runs:
           docker ps | grep mongo || echo "No MongoDB container found"
           exit 1
         fi
-        
-        # Test Redis port accessibility  
+
+        # Test Redis port accessibility
         if python3 -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('localhost', 6379)); s.close()" 2>/dev/null; then
           echo "✅ Redis port 6379 is accessible"
         else
@@ -243,51 +280,50 @@ runs:
           docker ps | grep redis || echo "No Redis container found"
           exit 1
         fi
-        
+
         echo "✅ Both database services are ready"
-        echo "ℹ️  Database collections will be created automatically by the spoo.me application"
 
     - name: 'Start Spoo.me service'
       shell: bash
       run: |
         echo "🚀 Starting Spoo.me service..."
         cd "${{ inputs.spoo-directory }}"
-        
+
         # Add uv to PATH
         export PATH="$HOME/.cargo/bin:$PATH"
-        
-        # Start the service in the background
-        echo "🔄 Starting server with uv run..."
-        nohup uv run main.py > spoo-service.log 2>&1 &
+
+        # Start the FastAPI service with uvicorn in the background
+        echo "🔄 Starting server with uvicorn..."
+        nohup uv run uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log > spoo-service.log 2>&1 &
         SERVICE_PID=$!
-        
+
         echo "📝 Service started with PID: $SERVICE_PID"
         echo $SERVICE_PID > spoo-service.pid
-        
+
         # Wait for service to start
         echo "⏳ Waiting for service to start..."
         timeout=${{ inputs.wait-timeout }}
         elapsed=0
-        
+
         while [ $elapsed -lt $timeout ]; do
-          if curl -s http://127.0.0.1:8000 >/dev/null 2>&1; then
+          if curl -s http://127.0.0.1:8000/health >/dev/null 2>&1; then
             echo "✅ Spoo.me service is running and accessible"
             echo "🌐 Service URL: http://127.0.0.1:8000"
             break
           fi
-          
+
           # Check if process is still running
           if ! kill -0 $SERVICE_PID 2>/dev/null; then
             echo "❌ Service process died. Checking logs..."
             tail -n 20 spoo-service.log
             exit 1
           fi
-          
+
           echo "⏳ Waiting for service to respond... (${elapsed}s/${timeout}s)"
           sleep 3
           elapsed=$((elapsed + 3))
         done
-        
+
         if [ $elapsed -ge $timeout ]; then
           echo "❌ Service failed to start within ${timeout} seconds"
           echo "📄 Service logs:"
@@ -300,30 +336,37 @@ runs:
       run: |
         echo "🔍 Performing service health checks..."
         cd "${{ inputs.spoo-directory }}"
-        
-        # Test basic connectivity
-        echo "🌐 Testing basic connectivity..."
-        response=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000)
-        if [ "$response" -eq 200 ] || [ "$response" -eq 404 ]; then
-          echo "✅ Service is responding (HTTP $response)"
-        else
-          echo "❌ Service health check failed (HTTP $response)"
+
+        # Use the /health endpoint for a proper check
+        echo "🌐 Checking /health endpoint..."
+        health_response=$(curl -s http://127.0.0.1:8000/health)
+        echo "📋 Health response: $health_response"
+
+        # Parse the status field
+        health_status=$(echo "$health_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['status'])" 2>/dev/null)
+
+        if [ "$health_status" = "unhealthy" ]; then
+          echo "❌ Service is unhealthy"
+          echo "📄 Service logs:"
+          tail -n 20 spoo-service.log 2>/dev/null
           exit 1
         fi
-        
+
+        echo "✅ Service status: $health_status"
+
         # Show final status
         echo ""
         echo "🎉 Spoo.me service setup complete!"
         echo "📊 Service Status:"
         echo "  - Service URL: http://127.0.0.1:8000"
-        echo "  - MongoDB: mongodb://localhost:27017/url-shortener (single instance)"
+        echo "  - Health: http://127.0.0.1:8000/health"
+        echo "  - MongoDB: mongodb://localhost:27017/"
         echo "  - Redis: redis://localhost:6379"
         echo "  - PID: $(cat spoo-service.pid 2>/dev/null || echo 'N/A')"
-        echo "  - Total setup time: Fast optimized setup! 🚀"
         echo ""
         echo "📄 Recent service logs:"
         tail -n 10 spoo-service.log 2>/dev/null || echo "No logs available"
 
 branding:
   icon: 'link'
-  color: 'gray-dark' 
+  color: 'gray-dark'

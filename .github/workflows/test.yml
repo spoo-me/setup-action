@@ -10,11 +10,11 @@ on:
       python-version:
         description: 'Python version to test'
         required: false
-        default: '3.12'
+        default: '3.13'
       mongodb-version:
         description: 'MongoDB version to test'
         required: false
-        default: '8.0'
+        default: '7.0'
       redis-version:
         description: 'Redis version to test'
         required: false
@@ -26,11 +26,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.11', '3.12']
-        mongodb-version: ['6.0', '7.0']
+        python-version: ['3.12', '3.13']
+        mongodb-version: ['7.0', '8.0']
         redis-version: ['7.0', '7.2']
       max-parallel: 2  # Limit parallel jobs to avoid resource issues
-    
+
     steps:
       - name: 'Checkout repository'
         uses: actions/checkout@v4
@@ -48,61 +48,76 @@ jobs:
       - name: 'Verify Action Outputs'
         run: |
           echo "🔍 Verifying action outputs..."
-          
+
           # Check outputs are set
           if [ -z "${{ steps.spoo-setup.outputs.service-url }}" ]; then
             echo "❌ service-url output not set"
             exit 1
           fi
-          
+
           if [ -z "${{ steps.spoo-setup.outputs.mongodb-uri }}" ]; then
             echo "❌ mongodb-uri output not set"
             exit 1
           fi
-          
+
           if [ -z "${{ steps.spoo-setup.outputs.redis-uri }}" ]; then
             echo "❌ redis-uri output not set"
             exit 1
           fi
-          
+
+          if [ -z "${{ steps.spoo-setup.outputs.health-url }}" ]; then
+            echo "❌ health-url output not set"
+            exit 1
+          fi
+
           echo "✅ All outputs are properly set"
           echo "  - Service URL: ${{ steps.spoo-setup.outputs.service-url }}"
           echo "  - MongoDB URI: ${{ steps.spoo-setup.outputs.mongodb-uri }}"
           echo "  - Redis URI: ${{ steps.spoo-setup.outputs.redis-uri }}"
+          echo "  - Health URL: ${{ steps.spoo-setup.outputs.health-url }}"
 
-      - name: 'Test API Endpoints'
+      - name: 'Test Health Endpoint'
         run: |
-          echo "🧪 Testing Spoo.me API endpoints..."
-          
-          SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
-          
-          # Test main page
-          echo "📱 Testing main page..."
-          if curl -s -f "$SERVICE_URL" > /dev/null; then
-            echo "✅ Main page accessible"
+          echo "🏥 Testing health endpoint..."
+
+          HEALTH_URL="${{ steps.spoo-setup.outputs.health-url }}"
+
+          health_response=$(curl -s "$HEALTH_URL")
+          echo "📋 Health response: $health_response"
+
+          health_status=$(echo "$health_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['status'])")
+
+          if [ "$health_status" = "healthy" ]; then
+            echo "✅ Service is healthy"
+          elif [ "$health_status" = "degraded" ]; then
+            echo "⚠️ Service is degraded (Redis may not be connected)"
           else
-            echo "❌ Main page not accessible"
+            echo "❌ Service is unhealthy: $health_status"
             exit 1
           fi
-          
-          # Test with timeout to avoid hanging
-          echo "🔍 Testing response content..."
-          response=$(timeout 10s curl -s "$SERVICE_URL" || echo "timeout")
-          
-          if [ "$response" != "timeout" ]; then
-            echo "✅ Service responded successfully"
-            echo "📄 Response preview (first 200 chars):"
-            echo "$response" | head -c 200
+
+      - name: 'Test Main Page'
+        run: |
+          echo "📱 Testing main page..."
+
+          SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
+
+          response_code=$(curl -s -o /dev/null -w "%{http_code}" "$SERVICE_URL")
+          echo "🔍 Main page response code: $response_code"
+
+          if [ "$response_code" = "200" ]; then
+            echo "✅ Main page accessible"
           else
-            echo "⚠️ Service response timed out"
+            echo "❌ Main page returned HTTP $response_code"
+            exit 1
           fi
 
       - name: 'Test URL Shortening API'
         run: |
           echo "🔗 Testing URL shortening functionality..."
-          
+
           SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
-          
+
           # Create a short URL using POST request
           echo "📤 Creating short URL for https://example.com..."
           api_response=$(curl -s \
@@ -112,41 +127,37 @@ jobs:
             --header 'Content-Type: application/x-www-form-urlencoded' \
             --data 'url=https://example.com' \
             --max-time 10)
-          
+
           echo "📥 API Response:"
           echo "$api_response"
-          
+
           # Check if response contains expected fields
           if echo "$api_response" | grep -q "short_url" && echo "$api_response" | grep -q "original_url"; then
             echo "✅ API response contains expected fields"
-            
+
             # Extract the short URL for redirect test
-            short_url=$(echo "$api_response" | grep -o '"short_url":"[^"]*"' | cut -d'"' -f4)
+            short_url=$(echo "$api_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['short_url'])" 2>/dev/null)
             echo "🔗 Extracted short URL: $short_url"
-            
+
             if [ -n "$short_url" ]; then
               # Test redirect functionality
               echo "🔄 Testing redirect functionality..."
-              
-              # Use different user agent and IP simulation
+
               redirect_response=$(curl -s \
                 --max-time 10 \
-                --header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3' \
+                --header 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' \
                 --header 'X-Forwarded-For: 110.33.122.75' \
                 --write-out "%{http_code}" \
                 --output /dev/null \
                 "$short_url")
-              
+
               echo "🔍 Redirect response code: $redirect_response"
-              
-              if [ "$redirect_response" = "302" ] || [ "$redirect_response" = "301" ]; then
+
+              if [ "$redirect_response" = "302" ] || [ "$redirect_response" = "301" ] || [ "$redirect_response" = "307" ]; then
                 echo "✅ Redirect working correctly (HTTP $redirect_response)"
               else
                 echo "⚠️ Unexpected redirect response: $redirect_response"
-                echo "🔍 Testing with full response to debug..."
                 curl -s -I "$short_url" | head -n 5
-                echo "📄 Original API response for debugging:"
-                echo "$api_response"
               fi
             else
               echo "❌ Could not extract short URL from response"
@@ -164,7 +175,7 @@ jobs:
         run: |
           echo "📄 Checking service logs..."
           cd test-spoo-service
-          
+
           if [ -f "spoo-service.log" ]; then
             echo "✅ Service log file exists"
             echo "📊 Log file size: $(wc -l < spoo-service.log) lines"
@@ -174,7 +185,7 @@ jobs:
             echo "❌ Service log file not found"
             ls -la
           fi
-          
+
           if [ -f "spoo-service.pid" ]; then
             PID=$(cat spoo-service.pid)
             echo "📝 Service PID: $PID"
@@ -187,25 +198,11 @@ jobs:
             echo "❌ Service PID file not found"
           fi
 
-      - name: 'Performance Test'
-        run: |
-          echo "⚡ Running basic performance test..."
-          SERVICE_URL="${{ steps.spoo-setup.outputs.service-url }}"
-          
-          # Simple load test with curl
-          echo "🔄 Testing 10 concurrent requests..."
-          for i in {1..10}; do
-            (curl -s -o /dev/null -w "%{time_total}\n" "$SERVICE_URL" &)
-          done
-          wait
-          
-          echo "✅ Performance test completed"
-
       - name: 'Cleanup Test Resources'
         if: always()
         run: |
           echo "🧹 Cleaning up test resources..."
-          
+
           # Stop the service
           cd test-spoo-service
           if [ -f "spoo-service.pid" ]; then
@@ -214,7 +211,7 @@ jobs:
               echo "🛑 Stopping service (PID: $PID)"
               kill $PID || true
               sleep 2
-              
+
               # Force kill if still running
               if kill -0 $PID 2>/dev/null; then
                 echo "🔥 Force stopping service"
@@ -222,13 +219,13 @@ jobs:
               fi
             fi
           fi
-          
+
           echo "✅ Cleanup completed"
 
   test-minimal:
     name: 'Test Minimal Configuration'
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: 'Checkout repository'
         uses: actions/checkout@v4
@@ -241,12 +238,22 @@ jobs:
         run: |
           echo "✅ Minimal setup test passed"
           echo "Service URL: ${{ steps.minimal-test.outputs.service-url }}"
-          curl -s ${{ steps.minimal-test.outputs.service-url }} | head -n 5
+
+          # Use health endpoint for verification
+          health_response=$(curl -s ${{ steps.minimal-test.outputs.health-url }})
+          echo "Health: $health_response"
+
+          health_status=$(echo "$health_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['status'])")
+          if [ "$health_status" = "unhealthy" ]; then
+            echo "❌ Service is unhealthy"
+            exit 1
+          fi
+          echo "✅ Service is running ($health_status)"
 
   test-custom-timeout:
     name: 'Test Custom Timeout'
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: 'Checkout repository'
         uses: actions/checkout@v4
@@ -261,4 +268,8 @@ jobs:
       - name: 'Verify custom timeout works'
         run: |
           echo "✅ Custom timeout test passed"
-          echo "Service URL: ${{ steps.timeout-test.outputs.service-url }}" 
+          echo "Service URL: ${{ steps.timeout-test.outputs.service-url }}"
+
+          health_response=$(curl -s ${{ steps.timeout-test.outputs.health-url }})
+          health_status=$(echo "$health_response" | python3 -c "import sys, json; print(json.load(sys.stdin)['status'])")
+          echo "Health: $health_status"
